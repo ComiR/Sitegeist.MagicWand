@@ -8,7 +8,6 @@ namespace Sitegeist\MagicWand\Command;
 
 use TYPO3\Flow\Annotations as Flow;
 use TYPO3\Flow\Configuration\ConfigurationManager;
-use TYPO3\Flow\Utility\Arrays;
 use TYPO3\Flow\Core\Bootstrap;
 
 /**
@@ -101,7 +100,7 @@ class CloneCommandController extends AbstractCommandController
      * @param string $port ssh port
      * @param string $path path on the remote server
      * @param string $context flow_context on the remote server
-     * @param mixded $postClone command or array of commands to be executed after cloning
+     * @param mixed $postClone command or array of commands to be executed after cloning
      * @param boolean $yes confirm execution without further input
      * @param boolean $keepDb skip dropping of database during sync
      * @param string $remoteFlowCommand the flow command to execute on the remote system
@@ -129,19 +128,32 @@ class CloneCommandController extends AbstractCommandController
 
         // read remote configuration
         $this->outputHeadLine('Fetch remote configuration');
-        $remotePersistenceConfigurationYaml = $this->executeLocalShellCommand(
-            'ssh -p %s  %s@%s  "cd %s; FLOW_CONTEXT=%s ' . $remoteFlowCommand . ' configuration:show --type Settings --path TYPO3.Flow.persistence.backendOptions;"',
-            [
-                $port,
-                $user,
-                $host,
-                $path,
-                $context
-            ],
-            [
-                self::HIDE_RESULT
-            ]
-        );
+        if ($host === 'localhost' || $host === '127.0.0.1') {
+            $remotePersistenceConfigurationYaml = $this->executeLocalShellCommand(
+                'cd %s; FLOW_CONTEXT=%s ' . $remoteFlowCommand . ' configuration:show --type Settings --path TYPO3.Flow.persistence.backendOptions;',
+                [
+                    $path,
+                    $context
+                ],
+                [
+                    self::HIDE_RESULT
+                ]
+            );
+        } else {
+            $remotePersistenceConfigurationYaml = $this->executeLocalShellCommand(
+                'ssh -p %s  %s@%s  "cd %s; FLOW_CONTEXT=%s ' . $remoteFlowCommand . ' configuration:show --type Settings --path TYPO3.Flow.persistence.backendOptions;"',
+                [
+                    $port,
+                    $user,
+                    $host,
+                    $path,
+                    $context
+                ],
+                [
+                    self::HIDE_RESULT
+                ]
+            );
+        }
 
         if ($remotePersistenceConfigurationYaml) {
             $remotePersistenceConfiguration = \Symfony\Component\Yaml\Yaml::parse($remotePersistenceConfigurationYaml);
@@ -212,38 +224,64 @@ class CloneCommandController extends AbstractCommandController
         ######################
 
         $this->outputHeadLine('Transfer Database');
-        $this->executeLocalShellCommand(
-            'ssh -p %s %s@%s \'mysqldump --add-drop-table --host=\'"\'"\'%s\'"\'"\' --user=\'"\'"\'%s\'"\'"\' --password=\'"\'"\'%s\'"\'"\' \'"\'"\'%s\'"\'"\'\' | mysql --host=\'%s\' --user=\'%s\' --password=\'%s\' \'%s\'',
-            [
-                $port,
-                $user,
-                $host,
-                $remotePersistenceConfiguration['host'],
-                $remotePersistenceConfiguration['user'],
-                $remotePersistenceConfiguration['password'],
-                $remotePersistenceConfiguration['dbname'],
-                $this->databaseConfiguration['host'],
-                $this->databaseConfiguration['user'],
-                $this->databaseConfiguration['password'],
-                $this->databaseConfiguration['dbname']
-            ]
-        );
+        if ($host === 'localhost' || $host === '127.0.0.1') {
+            $this->executeLocalShellCommand(
+                'mysqldump --add-drop-table --host="%s" --user="%s" --password="%s" "%s" | mysql --host="%s" --user="%s" --password="%s" "%s"',
+                [
+                    $remotePersistenceConfiguration['host'],
+                    $remotePersistenceConfiguration['user'],
+                    $remotePersistenceConfiguration['password'],
+                    $remotePersistenceConfiguration['dbname'],
+                    $this->databaseConfiguration['host'],
+                    $this->databaseConfiguration['user'],
+                    $this->databaseConfiguration['password'],
+                    $this->databaseConfiguration['dbname']
+                ]
+            );
+        } else {
+            $this->executeLocalShellCommand(
+                'ssh -p %s %s@%s \'mysqldump --add-drop-table --host=\'"\'"\'%s\'"\'"\' --user=\'"\'"\'%s\'"\'"\' --password=\'"\'"\'%s\'"\'"\' \'"\'"\'%s\'"\'"\'\' | mysql --host=\'%s\' --user=\'%s\' --password=\'%s\' \'%s\'',
+                [
+                    $port,
+                    $user,
+                    $host,
+                    $remotePersistenceConfiguration['host'],
+                    $remotePersistenceConfiguration['user'],
+                    $remotePersistenceConfiguration['password'],
+                    $remotePersistenceConfiguration['dbname'],
+                    $this->databaseConfiguration['host'],
+                    $this->databaseConfiguration['user'],
+                    $this->databaseConfiguration['password'],
+                    $this->databaseConfiguration['dbname']
+                ]
+            );
+        }
 
         ##################
         # Transfer Files #
         ##################
 
         $this->outputHeadLine('Transfer Files');
-        $this->executeLocalShellCommand(
-            'rsync -e "ssh -p %s" -kLr %s@%s:%s/* %s',
-            [
-                $port,
-                $user,
-                $host,
-                $remoteDataPersistentPath,
-                $localDataPersistentPath
-            ]
-        );
+        if ($host === 'localhost' || $host === '127.0.0.1') {
+            $this->executeLocalShellCommand(
+                'rsync -kLr %s/* %s',
+                [
+                    $remoteDataPersistentPath,
+                    $localDataPersistentPath
+                ]
+            );
+        } else {
+            $this->executeLocalShellCommand(
+                'rsync -e "ssh -p %s" -kLr %s@%s:%s/* %s',
+                [
+                    $port,
+                    $user,
+                    $host,
+                    $remoteDataPersistentPath,
+                    $localDataPersistentPath
+                ]
+            );
+        }
 
         ################
         # Clear Caches #
